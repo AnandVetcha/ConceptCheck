@@ -20,7 +20,7 @@ create table if not exists public.case_questions (
   title text not null,
   question text not null,
   answer_template text not null default '',
-  validator text not null check (validator in ('field','placement','identity','tutor','weather','tokens','order','route','responsibilities','internal')),
+  validator text not null check (validator in ('field','placement','identity','tutor','weather','tokens','order','route','responsibilities','internal','structured')),
   golden_answer jsonb not null,
   position integer not null
 );
@@ -52,7 +52,8 @@ create table if not exists public.conversations (
   demonstrated_change smallint,
   stage text not null default 'case1' check (stage in ('case1','probe','case2','completed')),
   version integer not null default 0 check (version >= 0),
-  consent_at timestamptz not null,
+  consent_at timestamptz,
+  data_collection_notice_at timestamptz,
   user_probe_answer_at timestamptz,
   created_at timestamptz not null default now(),
   completed_at timestamptz,

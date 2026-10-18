@@ -31,7 +31,7 @@ export async function startSession(userId: string, conceptId: string, explanatio
     probe_question:insight.probe,user_probe_answer:null,case_question2_id:selected[1].id,
     caseq2_user_answer:null,caseq2_answer_correct:null,demonstrated_change:null,
     case1_fresh:!seen.has(selected[0].id),case2_fresh:!seen.has(selected[1].id),
-    consent_at:new Date().toISOString(),user_probe_answer_at:null,
+    consent_at:null,data_collection_notice_at:new Date().toISOString(),user_probe_answer_at:null,
     stage:"case1",version:0,created_at:new Date().toISOString(),completed_at:null,ai_mode:insight.mode
   };
   await saveConversation(conversation); return sessionData(conversation);

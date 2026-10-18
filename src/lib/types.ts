@@ -1,7 +1,9 @@
 export type Concept = { id: string; topic: string; description: string; icon: string; color: string; position: number };
 export type CaseQuestion = { id: string; concept_id: string; title: string; question: string; answer_template: string; validator: string; golden_answer: unknown; position: number };
-export type PublicCase = Omit<CaseQuestion, "golden_answer" | "validator">;
-export type Grade = { status: "PASS" | "INCORRECT" | "FORMAT_ERROR"; message: string };
+export type FormatField = { path: string; expected: string; allowedValues?: (string | number | boolean)[] };
+export type FormatIssue = FormatField & { received: string; message: string };
+export type PublicCase = Omit<CaseQuestion, "golden_answer" | "validator"> & { format_fields?: FormatField[] };
+export type Grade = { status: "PASS" | "INCORRECT" | "FORMAT_ERROR"; message: string; issues?: FormatIssue[] };
 export type Stage = "case1" | "probe" | "case2" | "completed";
 export type Attempt = { id: string; conversation_id: string; user_id: string; case_question_id: string; stage: "case1" | "case2"; answer: string; status: Grade["status"]; created_at: string };
 export type Conversation = {
@@ -12,8 +14,14 @@ export type Conversation = {
   case_question2_id: string; caseq2_user_answer: string | null; caseq2_answer_correct: boolean | null;
   case1_fresh: boolean; case2_fresh: boolean;
   demonstrated_change: -1 | 0 | 1 | null; stage: Stage; version: number;
-  consent_at: string; user_probe_answer_at: string | null;
+  consent_at: string | null; data_collection_notice_at: string | null; user_probe_answer_at: string | null;
   created_at: string; completed_at: string | null; ai_mode: "groq" | "mock";
 };
 export type SessionData = { conversation: Conversation; caseQuestion: PublicCase | null; completedCases?: PublicCase[]; grade?: Grade };
 export type Recital = { id: string; user_id: string; label: string };
+export type AdminInsights = {
+  learners: number; sessions: number; completed: number; inProgress: number;
+  attempts: number; passed: number; incorrect: number; formatErrors: number;
+  freshImprovements: number;
+  concepts: { conceptId: string; sessions: number; completed: number; secondCasePassed: number; improvements: number; attempts: number; passed: number; incorrect: number; formatErrors: number }[];
+};

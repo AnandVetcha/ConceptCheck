@@ -6,7 +6,9 @@ const mockProbes: Record<string,string> = {
   architecture: "Suppose the model needs more RAM than your laptop has. Trace what happens from typing a question to seeing an answer. Where might the process fail?",
   identity: "Suppose Alice changes a conversation ID in a browser request to one belonging to Bob. What would you check before returning anything, and why?",
   contracts: "Suppose an API rejects a request even though its address is correct. How would you work out which part of the request disagrees with the contract?",
-  tools: "Suppose a model asks for a booking lookup but nobody executes that request. What would the model know next, and what would still be missing?"
+  tools: "Suppose a database has saved the earlier conversation, but the model receives only your latest question. What would it know, and what step would still be missing?",
+  relationships: "Suppose one conversation receives another hundred messages. Which rows need a parent reference, and what would break if you kept only one message reference on the conversation?",
+  history: "Suppose you replace yesterday’s answer with today’s in one field. How would you later reconstruct what changed and who made each attempt?"
 };
 export async function analyze(concept: Concept, explanation: string, recitals: Recital[]): Promise<Insight> {
   if(isDemo()) {

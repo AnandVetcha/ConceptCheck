@@ -35,7 +35,7 @@ ADMIN_EMAILS=
 
 Only the URL and public key go to the browser. Groq and the Supabase service-role key stay in server routes. Do not prefix private keys with `NEXT_PUBLIC_`, commit `.env.local`, or paste credentials into chat. `GROQ_MODEL` is configurable: choose a model enabled for your Groq account that supports JSON-object output. API failures do not silently become mock responses in live mode.
 
-Optional `ADMIN_EMAILS` is a comma-separated list of verified account emails permitted to see cross-learner sentence frequencies. Everyone else sees only their own learning record. Shared trends contain exact learner sentences, labels, and aggregate counts, with no account names or IDs. Learners consent to this in the app. Do not put personal information into an explanation.
+Optional `ADMIN_EMAILS` is a comma-separated list of verified account emails permitted to see cross-learner sentence frequencies. Everyone else sees only their own learning record. Shared trends contain exact learner sentences, labels, and aggregate counts, with no account names or IDs. The app displays a learning-analysis notice before practice; every saved session and submission is included automatically, without a consent checkbox. Do not put personal information into an explanation.
 
 ## Deploy later to Vercel
 
@@ -51,11 +51,11 @@ Do not use the local JSON store on Vercel: production always requires Supabase. 
 
 ## What is implemented
 
-- Five database-backed concepts: API keys and secrets, component placement, identity and persistence, API contracts, and tool calling.
-- Ten supplied golden cases and deterministic validators, plus one clearly documented supplemental tool case so that concept also has a distinct before/after pair.
-- Consent, verbatim suspected recital quote, label under five words, and LLM comparison with this learner’s prior labels. Existing labels are reused only for model-reported confidence **strictly greater than 0.95**. Confidence is a model judgment, not a calibrated statistical measurement.
+- Seven database-backed concepts matching the supplied concept golden-answer reference: backend purpose, API calls, secret keys, persistence and retrieval, relationship pointers, history rows, and component placement.
+- Four deterministic cases per concept (28 total): the ten original golden cases, the earlier supplemental Q11, and 17 additional cases. See [the full question bank](docs/question-bank.md) for prompts, answer structures, golden answers, and concept reference reasoning.
+- A visible learning-analysis notice, verbatim suspected recital quote, label under five words, and LLM comparison with this learner’s prior labels. Existing labels are reused only for model-reported confidence **strictly greater than 0.95**. Confidence is a model judgment, not a calibrated statistical measurement.
 - One probe and response linked to the conversation, different case IDs, exact before/after grading, timestamps, resumable sessions, and optimistic concurrency checks.
-- Format errors are recorded as attempts but do not advance the session or count as incorrect application. A structurally valid answer is graded once and advances the sequence.
+- Format errors identify each invalid field or array entry, its submitted value, and the permitted values or required type. An expandable field guide is available before submission. Missing fields, unexpected keys, JSON syntax, nested structures, and array lengths receive specific feedback. Invalid labels from outside the question’s candidate set are format errors; valid but wrong assignments still receive INCORRECT. Format errors are recorded as attempts but do not advance the session or count as incorrect application. A structurally valid answer is graded once and advances the sequence.
 - `demonstrated_change`: null until both cases are graded; +1 for incorrect → correct; 0 for matching outcomes; −1 for correct → incorrect. The database checks this invariant independently of application code.
 - Cases prefer unseen questions. When the small bank is exhausted, the app labels repeat practice and excludes it from the fresh-case improvement metric. A correct second case does not establish that the AI probe caused learning.
 - Personal history, phrase recurrence, repeated application-gap signals, administrator-only shared sentence frequencies, and an illustrative replay.
@@ -70,7 +70,7 @@ flowchart LR
   API -->|Private service-role key| DB[(Supabase Postgres)]
 ```
 
-The supplied spreadsheet’s `User_Table`, `Concept_Table`, `CaseQ_Table`, and `Conversation_Table` map to `profiles`, `concepts`, `case_questions`, and `conversations`. Database names use consistent snake_case and correct spelling. The additional `recitals` table stores each learner’s canonical phrase labels, and `case_attempts` records every case submission with a timestamp and status, including format errors. Consent and probe-answer timestamps are stored on the conversation.
+The supplied spreadsheet’s `User_Table`, `Concept_Table`, `CaseQ_Table`, and `Conversation_Table` map to `profiles`, `concepts`, `case_questions`, and `conversations`. Database names use consistent snake_case and correct spelling. The additional `recitals` table stores each learner’s canonical phrase labels, and `case_attempts` records every case submission with a timestamp and status, including format errors. Notice-display and probe-answer timestamps are stored on the conversation. Historical explicit-consent timestamps are retained; new sessions leave consent_at null.
 
 Both before/after cases, the recital, the probe, and its response belong to the same conversation ID; the second attempt therefore remains linked to the gap it tests. Concepts and cases are tables so content can be updated without redeploying the UI. Validators remain code; a newly added validator type needs an implementation and tests.
 
@@ -86,13 +86,16 @@ npm run build
 node scripts/smoke-test.mjs
 ```
 
-The smoke test creates isolated demo learners and exercises the full flow for all five concepts, format correction, +1 change, consent, persistence, distinct cases, repeat-practice marking, cross-origin rejection, ownership isolation, and stale/completed submission rejection. Its records belong to a separate cookie and do not appear in your normal browser workspace. It deliberately refuses to run against live mode.
+The smoke test creates isolated demo learners and exercises the full flow for all seven concepts, format correction, +1 change, automatic analysis, persistence, distinct cases, repeat-practice marking, cross-origin rejection, ownership isolation, and stale/completed submission rejection. Its records belong to a separate cookie and do not appear in your normal browser workspace. It deliberately refuses to run against live mode.
 
 Regenerate both the SQL seed and combined setup after changing the built-in catalog or initial migration:
 
 ```powershell
 npx tsx scripts/seed.ts
+npx tsx scripts/export-question-bank.ts
 ```
+
+For an existing hosted project, run `supabase/migrations/002_four_cases_per_concept.sql` in Supabase SQL Editor and refresh the app. This extends the validator constraint and upserts the content without deleting existing learner data. For a new project use the combined setup file.
 
 The database regression tests execute the generated SQL in embedded PostgreSQL, compare every stored JSON golden answer with the catalog, and verify that rerunning setup preserves learner data. This also covers recovery when the schema succeeded but the seed failed.
 
@@ -103,6 +106,12 @@ In Supabase **Settings → API Keys → Publishable and secret API keys**, creat
 Supabase's legacy `anon` and `service_role` keys are tied to the legacy JWT secret and are not independently rotatable. After verifying the new keys and migrating any other clients, deactivate legacy API keys in the dashboard. See the [official migration guide](https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys). Replacing the key in this app alone does not invalidate an exposed legacy key.
 
 Live Groq, Supabase SQL, RLS, signup, and hosted deployment need a configured external project to verify. Unit tests and local demo checks do not establish live service connectivity.
+
+## Automatic learning analysis
+
+Run `supabase/migrations/003_automatic_learning_analysis.sql` once on an existing project to allow new sessions without falsely recording checkbox consent. It preserves historical consent timestamps and adds a separate notice-display timestamp. New installs use the updated setup file.
+
+Practice has no checkbox or consent flag. A notice states that explanations are sent to Groq and saved responses contribute to administrator learning trends. Administrator insights cover all saved sessions and case submissions, including unfinished sessions, incorrect answers, and format errors. Summary counts and per-concept outcomes are aggregated on the server; names and user IDs are not returned. Only authenticated emails in ADMIN_EMAILS receive these cross-learner aggregates; other users continue to see personal insights only. Sentence frequencies show the top 20 groups across all saved sessions.
 
 ## References
 

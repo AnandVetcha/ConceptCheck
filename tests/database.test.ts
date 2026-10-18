@@ -38,9 +38,41 @@ test("setup recovers after schema-only success, and standalone seed is repeatabl
   const db = new PGlite();
   try {
     await db.exec(authSchema);
-    await db.exec(readFileSync("supabase/migrations/001_initial.sql","utf8"));
+    // Simulate the already-deployed schema, whose CHECK predates structured cases.
+    await db.exec(readFileSync("supabase/migrations/001_initial.sql","utf8").replace(",'structured'", ""));
     await db.exec(setup);
     await db.exec(readFileSync("supabase/seed.sql","utf8"));
     assert.equal((await db.query("select id from public.case_questions")).rows.length,cases.length);
   } finally { await db.close(); }
+});
+
+test("the content upgrade can run on an existing database without duplicating cases", async () => {
+  const db=new PGlite();
+  try {
+    await db.exec(authSchema);
+    await db.exec(readFileSync("supabase/migrations/001_initial.sql","utf8").replace(",'structured'", ""));
+    const upgrade=readFileSync("supabase/migrations/002_four_cases_per_concept.sql","utf8");
+    await db.exec(upgrade);await db.exec(upgrade);
+    const counts=await db.query<{concept_id:string;count:number}>("select concept_id,count(*)::int as count from public.case_questions group by concept_id");
+    assert.equal(counts.rows.length,7);assert.ok(counts.rows.every(r=>r.count===4));
+  } finally {await db.close();}
+});
+
+test("automatic analysis preserves past consent without claiming consent for new sessions", async () => {
+  const db=new PGlite();
+  try {
+    await db.exec(authSchema);
+    const original=readFileSync("supabase/migrations/001_initial.sql","utf8").replace("consent_at timestamptz,","consent_at timestamptz not null,").replace("  data_collection_notice_at timestamptz,\n","");
+    await db.exec(original);await db.exec(readFileSync("supabase/seed.sql","utf8"));
+    const userId="00000000-0000-0000-0000-000000000001";
+    await db.query("insert into auth.users(id) values ($1)",[userId]);
+    const insert="insert into public.conversations(user_id,concept_id,user_explanation,recital_sentence,recital_label,case_question1_id,probe_question,case_question2_id,case1_fresh,case2_fresh,consent_at,ai_mode) values ($1,'secrets','Example explanation','Example','Example','q1','What breaks?','q6',true,true,$2,'mock')";
+    await db.query(insert,[userId,"2026-10-18T12:00:00Z"]);
+    const migration=readFileSync("supabase/migrations/003_automatic_learning_analysis.sql","utf8");
+    await db.exec(migration);await db.exec(migration);
+    await db.query(insert,[userId,null]);
+    const rows=await db.query<{consent_at:Date|null}>("select consent_at from public.conversations order by consent_at nulls last");
+    assert.equal(rows.rows[0].consent_at?.toISOString(),"2026-10-18T12:00:00.000Z");
+    assert.equal(rows.rows[1].consent_at,null);
+  } finally {await db.close();}
 });

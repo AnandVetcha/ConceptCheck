@@ -1,58 +1,77 @@
-import type { CaseQuestion, Grade } from "./types";
+import type { CaseQuestion, FormatIssue, Grade } from "./types";
+import { answerRule, childPath, expectedValue, fieldNames, orderLetters, tokenLabels, type Rule } from "./answer-format";
 type Obj = Record<string, unknown>;
 const object = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
-const keys = (v: unknown, names: string[]): v is Obj => object(v) && Object.keys(v).length === names.length && names.every(k => Object.hasOwn(v, k));
-const strings = (v: Obj) => Object.values(v).every(x => typeof x === "string");
-const allowed = (v: unknown, list: string[]) => typeof v === "string" && list.includes(v);
 export function equal(a: unknown, b: unknown): boolean {
-  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((v,i) => equal(v,b[i]));
-  if (object(a) && object(b)) return keys(a,Object.keys(b)) && Object.keys(b).every(k => equal(a[k],b[k]));
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((v, i) => equal(v, b[i]));
+  if (object(a) && object(b)) return Object.keys(a).length === Object.keys(b).length && Object.keys(b).every(k => Object.hasOwn(a, k) && equal(a[k], b[k]));
   return a === b;
+}
+function received(value: unknown): string {
+  const display = value === undefined ? "missing" : JSON.stringify(value);
+  return display.length > 160 ? display.slice(0, 157) + "…" : display;
+}
+function issue(path: string, rule: Rule, value: unknown, message: string): FormatIssue {
+  return { path: path || "Answer", received: received(value), message, expected: expectedValue(rule), ...(rule.allowedValues ? { allowedValues: rule.allowedValues } : {}) };
+}
+function check(rule: Rule, value: unknown, path: string, issues: FormatIssue[]) {
+  const type = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+  if (!rule.types.includes(type) || (type === "number" && !Number.isFinite(value))) {
+    issues.push(issue(path, rule, value, value === undefined ? "This field is missing." : "This value has the wrong type.")); return;
+  }
+  if (rule.allowedValues && !rule.allowedValues.some(v => v === value)) issues.push(issue(path, rule, value, "This value is not in the permitted set."));
+  if (rule.properties && object(value)) {
+    for (const key of Object.keys(value)) if (!Object.hasOwn(rule.properties, key)) issues.push(issue(childPath(path, key), rule, value[key], `Unexpected field. Remove it; permitted fields here are ${Object.keys(rule.properties).join(", ")}.`));
+    for (const [key, child] of Object.entries(rule.properties)) check(child, Object.hasOwn(value, key) ? value[key] : undefined, childPath(path, key), issues);
+  }
+  if (rule.items && Array.isArray(value)) {
+    if (value.length !== rule.items.length) issues.push(issue(path, rule, value, `This array has ${value.length} entries; it needs exactly ${rule.items.length}.`));
+    rule.items.forEach((child, i) => { if (i < value.length) check(child, value[i], `${path}[${i}]`, issues); });
+  }
+}
+function formatError(issues: FormatIssue[]): Grade {
+  return { status: "FORMAT_ERROR", message: `Please fix ${issues.length === 1 ? "this field" : `these ${issues.length} fields or entries`} and submit again. Your answer has not been graded yet.`, issues };
 }
 export function validate(q: CaseQuestion, answer: string): Grade {
   let value: unknown;
-  let valid = false;
-  let hint = "Use the supplied JSON structure, field names, and permitted values.";
-  switch (q.validator) {
-    case "field":
-      value = answer.trim(); valid = allowed(value,["Answer","LLM_key","Request_ID"]);
-      hint = "Reply with exactly one field name: Answer, LLM_key, or Request_ID."; break;
-    case "tokens": {
-      const tokens = answer.split(",").map(t => t.trim());
-      valid = tokens.length === 3 && tokens.every(t => allowed(t,["server","client","LLM_provider","user_question","LLM_response"]));
-      value = tokens.join(", "); hint = "Use three comma-separated labels: <token1>, <token2>, <token3>."; break;
+  const issues: FormatIssue[] = [];
+  if (q.validator === "field") {
+    value = answer.trim();
+    if (!fieldNames.includes(value as string)) issues.push({...issue("Answer", { types: ["string"], allowedValues: fieldNames }, value, "Reply with exactly one field name, without JSON or quotation marks."),expected:`Choose one: ${fieldNames.join(", ")}. Enter the name without quotation marks.`});
+  } else if (q.validator === "tokens" || q.validator === "order") {
+    const tokens = answer.split(",").map(t => t.trim());
+    const isOrder = q.validator === "order", length = isOrder ? 5 : 3;
+    const permitted = isOrder ? orderLetters : tokenLabels;
+    if (tokens.length !== length) issues.push({ path: "Answer", received: `${tokens.length} comma-separated entries`, expected: `Use exactly ${length} comma-separated ${isOrder ? "letters" : "labels"}.`, allowedValues: permitted, message: "The number of entries is incorrect." });
+    tokens.forEach((token, i) => {
+      const path = `${isOrder ? "Event" : "Token"}[${i}]`;
+      if (!permitted.includes(token)) issues.push({...issue(path, { types: ["string"], allowedValues: permitted }, token, "This entry is not one of the permitted labels."),expected:`Choose one: ${permitted.join(", ")}. Enter comma-separated entries without quotation marks.`});
+      else if (isOrder && tokens.indexOf(token) !== i) issues.push({...issue(path, { types: ["string"], allowedValues: permitted }, token, "This letter is repeated. Use each of A–E exactly once."),expected:"Use each of A, B, C, D, E once, without quotation marks."});
+    });
+    value = tokens.join(", ");
+  } else {
+    try { value = JSON.parse(answer); }
+    catch (error) {
+      const parserMessage = error instanceof Error ? error.message : "Invalid JSON";
+      const position = parserMessage.match(/position\s+(\d+)/i)?.[1];
+      const before = position ? answer.slice(0, Number(position)) : null;
+      const location = before === null ? "JSON syntax" : `JSON syntax (line ${before.split("\n").length}, column ${before.length - before.lastIndexOf("\n")})`;
+      return formatError([{ path: location, received: "JSON could not be parsed", message: "Check double quotes, commas between fields, and matching braces or brackets.", expected: "Use the supplied JSON structure. Open ‘Allowed values for each field’ below for field names and permitted values." }]);
     }
-    case "order": {
-      const tokens = answer.split(",").map(t => t.trim());
-      valid = tokens.length === 5 && new Set(tokens).size === 5 && tokens.every(t => /^[A-E]$/.test(t));
-      value = tokens.join(", "); hint = "Reply with five comma-separated letters, using A–E exactly once."; break;
-    }
-    default: {
-      try { value = JSON.parse(answer); } catch { return {status:"FORMAT_ERROR",message:"Enter valid JSON using the supplied structure. Use double quotes around keys and strings."}; }
-      if (!object(q.golden_answer) || !keys(value,Object.keys(q.golden_answer))) break;
-      const v = value;
-      switch(q.validator) {
-        case "placement": valid = Object.values(v).every(x => allowed(x,["Client","Remote_server","LLM_server"])); break;
-        case "identity": valid = allowed(v.Compare_owner_with,["Server_verified_identity","Browser_claimed_identity"]) && [v.R1,v.R2,v.R3].every(x => allowed(x,["ALLOW","DENY"])); break;
-        case "tutor": {
-          hint = "Use the supplied JSON structure and fill every blank with a string.";
-          if (!object(v.Headers)) break;
-          const headers = Object.fromEntries(Object.entries(v.Headers).map(([k,val]) => [k.toLowerCase(),val]));
-          valid = Object.keys(v.Headers).length === 2 && keys(headers,["authorization","content-type"]) && strings(headers) && typeof v.URL === "string" && typeof v.Method === "string" && keys(v.Body,["instruction","question"]) && strings(v.Body);
-          if (valid) value = {...v, Headers:{Authorization:headers.authorization,"Content-Type":headers["content-type"]}};
-          break;
-        }
-        case "weather":
-          hint = "Use the supplied JSON structure. Use null without quotation marks when no value is required.";
-          valid = typeof v.URL === "string" && typeof v.Method === "string" && keys(v.Query,["city"]) && typeof v.Query.city === "string" && [v.Authentication,v.Body].every(x => x === null || typeof x === "string" || object(x)); break;
-        case "route": valid = [v.UI,v.Backend,v.Model].every(x => allowed(x,["Browser","Server","Model_provider"])) && Array.isArray(v.Question_route) && v.Question_route.length === 3 && v.Question_route.every(x => allowed(x,["UI","Backend","Model"])) && typeof v.Model_machine_remaining_RAM_GB === "number" && Number.isFinite(v.Model_machine_remaining_RAM_GB); break;
-        case "responsibilities": valid = Object.values(v).every(x => allowed(x,["Browser","Backend_secret_storage","Backend_processing","Persistent_database"])); break;
-        case "internal": valid = [v.Display_UI_and_collect_path,v.Validate_and_dispatch,v.Read_and_analyse_waveform,v.Keep_file_credentials].every(x => allowed(x,["Laptop_browser","VPN_backend","Internal_worker","Internal_secret_storage"])) && typeof v.Worker_remaining_RAM_GB === "number" && Number.isFinite(v.Worker_remaining_RAM_GB) && typeof v.Public_provider_can_reach_internal_file === "boolean" && typeof v.Policy_allows_raw_waveform_at_public_provider === "boolean"; break;
+    // Normalize tutor header names, never values. Preserve duplicate errors.
+    if (q.validator === "tutor" && object(value) && object(value.Headers)) {
+      const headers: Obj = {};
+      for (const [key, entry] of Object.entries(value.Headers)) {
+        const canonical = key.toLowerCase() === "authorization" ? "Authorization" : key.toLowerCase() === "content-type" ? "Content-Type" : key;
+        if (Object.hasOwn(headers, canonical)) issues.push({ path: `Headers.${key}`, received: received(entry), message: "This header is supplied more than once with different capitalization.", expected: "Include Authorization and Content-Type exactly once each." });
+        headers[canonical] = entry;
       }
+      value = { ...value, Headers: headers };
     }
+    check(answerRule(q), value, "", issues);
   }
-  if (!valid) return {status:"FORMAT_ERROR",message:hint};
-  return equal(value,q.golden_answer) ? {status:"PASS",message:"Correct. Your answer meets every rule for this case."} : {status:"INCORRECT",message:"Your answer has the right format, but it does not meet every rule for this case."};
+  if (issues.length) return formatError(issues);
+  return equal(value, q.golden_answer) ? { status: "PASS", message: "Correct. Your answer meets every rule for this case." } : { status: "INCORRECT", message: "Your answer has the right format, but it does not meet every rule for this case." };
 }
 export function demonstratedChange(before: boolean | null, after: boolean | null): -1 | 0 | 1 | null {
   return before === null || after === null ? null : before === after ? 0 : after ? 1 : -1;

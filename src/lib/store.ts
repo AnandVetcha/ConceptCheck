@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { concepts, cases } from "./catalog";
 import { isDemo } from "./config";
 import type { Concept, CaseQuestion, Conversation, Recital, Attempt } from "./types";
+import { buildAdminInsights, type AnalyticsConversation, type AnalyticsAttempt } from "./analytics";
 export function adminClient() {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {auth:{persistSession:false,autoRefreshToken:false}});
 }
@@ -72,4 +73,23 @@ export async function globalTrends() {
 export async function saveAttempt(attempt: Attempt) {
   if(isDemo()) return local(d => {d.attempts.push(attempt);},true);
   const {error} = await adminClient().from("case_attempts").insert(attempt); if(error) throw error;
+}
+export async function getAdminInsights() {
+  if(isDemo()) return local(d=>buildAdminInsights(d.conversations,d.attempts));
+  const db=adminClient();
+  // Fetch every page rather than silently limiting the administrator view to
+  // PostgREST's default row limit. Raw learner IDs never leave this server.
+  async function all<T>(table:string,columns:string):Promise<T[]> {
+    const rows:T[]=[];const pageSize=500;
+    for(let offset=0;;offset+=pageSize) {
+      const {data,error}=await db.from(table).select(columns).order("id").range(offset,offset+pageSize-1);
+      if(error) throw error;rows.push(...data as unknown as T[]);
+      if(data.length<pageSize) return rows;
+    }
+  }
+  const [conversations,attempts]=await Promise.all([
+    all<AnalyticsConversation>("conversations","id,user_id,concept_id,stage,caseq2_answer_correct,demonstrated_change,case1_fresh,case2_fresh"),
+    all<AnalyticsAttempt>("case_attempts","id,conversation_id,status")
+  ]);
+  return buildAdminInsights(conversations,attempts);
 }
