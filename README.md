@@ -1,5 +1,7 @@
 # ConceptChek
 
+Live app: [conceptchek.vercel.app](https://conceptchek.vercel.app).
+
 A full-stack learning app built with Next.js, React, Groq, and Supabase. Explain a concept, apply it to a case, respond to one reasoning probe, then apply it to a different case. Code grades the cases; AI never declares that a learner understands.
 
 ## Start locally
@@ -47,7 +49,19 @@ The frontend and backend deploy as one Next.js project. There is no separate bac
 4. Deploy. Update Supabase Auth Site URL/redirect settings to your deployed domain.
 5. Create an account and run a full explanation → case → probe → different case → summary session.
 
-Do not use the local JSON store on Vercel: production always requires Supabase. No cloud project has been created, no remote migration has been applied, and nothing has been pushed or deployed by this implementation.
+Do not use the local JSON store on Vercel: production always requires Supabase. The app is deployed to the Vercel project `conceptchek` in the `d100` scope at https://conceptchek.vercel.app. Production variables are configured in Vercel; private local files are excluded by `.vercelignore`. The SQL migrations were applied by the project owner in Supabase SQL Editor.
+
+### Production email confirmation links
+
+In Supabase **Authentication → URL Configuration**, set **Site URL** to `https://conceptchek.vercel.app` and add `https://conceptchek.vercel.app/**` to **Redirect URLs**. This is needed for new-user confirmation links to return to the hosted app. Keep a localhost redirect entry if local confirmation testing is still needed.
+
+The GitHub repository is connected to Vercel with `main` as the production branch. Pushing commits to `main` triggers a production deployment; a successful deployment updates the live app.
+
+To deploy manually from this linked local project:
+
+```powershell
+vercel deploy --prod --scope d100
+```
 
 ## What is implemented
 
@@ -105,7 +119,7 @@ In Supabase **Settings → API Keys → Publishable and secret API keys**, creat
 
 Supabase's legacy `anon` and `service_role` keys are tied to the legacy JWT secret and are not independently rotatable. After verifying the new keys and migrating any other clients, deactivate legacy API keys in the dashboard. See the [official migration guide](https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys). Replacing the key in this app alone does not invalidate an exposed legacy key.
 
-Live Groq, Supabase SQL, RLS, signup, and hosted deployment need a configured external project to verify. Unit tests and local demo checks do not establish live service connectivity.
+Live Groq analysis and Supabase connectivity were checked separately. The Vercel deployment was verified with public HTTP requests and a browser: the sign-in page loads, live mode is enabled, and anonymous dashboard/session API requests return 401. A complete hosted sign-up and signed-in learning session still needs a user walkthrough. Unit tests and local demo checks alone do not establish live service connectivity.
 
 ## Automatic learning analysis
 
